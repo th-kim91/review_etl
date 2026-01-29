@@ -10,11 +10,18 @@
 # - 중복 제거(수정):
 #   ✅ 중복키 = (작성자id, 작성일자, 리뷰 첫 단어)
 #   ✅ 중복이면 "두 번째" 행만 남김 (1개면 그대로)
+# - 최대 500개 제한:
+#   ✅ 최종 결과(df) 기준으로 500개 초과 시 앞에서 500개만 남김
 
 import re
 import pandas as pd
 import streamlit as st
 from typing import List, Optional
+
+# ---------------------------
+# 설정
+# ---------------------------
+MAX_REVIEWS = 500  # ✅ 최대로 남길 리뷰 수
 
 # ---------------------------
 # 공통 유틸
@@ -217,8 +224,12 @@ def parse_jd(text: str, default_year: int = 2026) -> pd.DataFrame:
 
     df = pd.DataFrame(rows, columns=["작성자id", "작성일자", "리뷰내용"])
 
-    # ✅ 여기만 변경: 중복 제거 로직 교체
+    # ✅ 중복 제거 (id, date, first_word) + 두 번째 유지
     df = _dedupe_keep_second_by_firstword(df)
+
+    # ✅ 최종 결과 기준 500개 제한
+    if len(df) > MAX_REVIEWS:
+        df = df.iloc[:MAX_REVIEWS].reset_index(drop=True)
 
     return df
 
@@ -232,11 +243,17 @@ def parse_tmall(text: str) -> pd.DataFrame:
     lines = _normalize_lines(text)
 
     def is_noise_tmall(line: str) -> bool:
-        noise_phrases = [
-            "为你展示真实评价", "默认排序", "款式筛选", "更多",
-            "有用", "回复",
+    # ✅ '有用/回复/更多' 같은 버튼 텍스트는 "단독 라인"일 때만 제거해야 함
+        noise_exact = {"更多", "有用", "回复"}
+
+        # ✅ UI 문구는 포함되면 제거(이건 기존처럼 substring OK)
+        noise_contains = [
+            "为你展示真实评价", "默认排序", "款式筛选",
         ]
-        if any(p in line for p in noise_phrases):
+
+        if line in noise_exact:
+            return True
+        if any(p in line for p in noise_contains):
             return True
         if _is_noise_line_common(line):
             return True
@@ -342,8 +359,12 @@ def parse_tmall(text: str) -> pd.DataFrame:
 
     df = pd.DataFrame(rows, columns=["작성자id", "작성일자", "리뷰내용"])
 
-    # ✅ 여기만 변경: 중복 제거 로직 교체
+    # ✅ 중복 제거 (id, date, first_word) + 두 번째 유지
     df = _dedupe_keep_second_by_firstword(df)
+
+    # ✅ 최종 결과 기준 500개 제한
+    if len(df) > MAX_REVIEWS:
+        df = df.iloc[:MAX_REVIEWS].reset_index(drop=True)
 
     return df
 
@@ -386,7 +407,7 @@ if do_parse:
         df = parse_tmall(text)
 
     st.subheader("파싱 결과")
-    st.caption(f"총 {len(df)}건")
+    st.caption(f"총 {len(df)}건 (최대 {MAX_REVIEWS}건 표시)")
     st.dataframe(df, use_container_width=True)
 
     csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
@@ -399,4 +420,8 @@ if do_parse:
 
     if show_raw_lines:
         st.subheader("디버그: 정리된 라인")
-        st.code("\n".join(_normalize_lines(_preclean_jd_text(text))))
+        # JD 선택일 때만 JD 전처리 적용해서 보여주기
+        if platform.startswith("징동"):
+            st.code("\n".join(_normalize_lines(_preclean_jd_text(text))))
+        else:
+            st.code("\n".join(_normalize_lines(text)))
